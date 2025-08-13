@@ -13,12 +13,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm i @linear/sdk node-fetch@3
+      - name: Install deps
+        run: npm install --omit=dev
       - name: Run round-robin
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}   # e.g. "9cfb48...02d"
-          # Comma-separated emails in desired order:
-          ASSIGNEE_EMAILS: ${{ vars.ASSIGNEE_EMAILS }} # "a@hooglee.com,b@hooglee.com,c@hooglee.com"
-          WORKSPACE_SLUG: ${{ vars.WORKSPACE_SLUG }}   # e.g. "hooglee" (for profile URLs)
+          LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
+          ASSIGNEE_EMAILS: ${{ vars.ASSIGNEE_EMAILS }}  # "a@hooglee.com,b@...,c@..."
         run: node scripts/roundRobin.js
