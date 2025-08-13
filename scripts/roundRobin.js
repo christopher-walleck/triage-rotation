@@ -5,15 +5,10 @@ const {
   LINEAR_API_KEY,
   LINEAR_TEAM_ID,
   ASSIGNEE_EMAILS, // comma-separated emails in rotation order
-  WORKSPACE_SLUG,  // e.g. "hooglee"
 } = process.env;
 
 if (!LINEAR_API_KEY || !LINEAR_TEAM_ID || !ASSIGNEE_EMAILS) {
   console.error("Missing required env vars: LINEAR_API_KEY, LINEAR_TEAM_ID, ASSIGNEE_EMAILS");
-  process.exit(1);
-}
-if (!WORKSPACE_SLUG) {
-  console.error("Missing WORKSPACE_SLUG (e.g., 'hooglee'). Add it as a repo variable.");
   process.exit(1);
 }
 
@@ -24,7 +19,6 @@ async function getUserMapByEmail(emails) {
   const byEmail = new Map();
   for (const u of users.nodes) {
     if (!u?.email) continue;
-    // We'll also keep the user id to build profile URLs
     byEmail.set(u.email.toLowerCase(), { id: u.id, name: u.name });
   }
   const missing = emails.filter(e => !byEmail.has(e.toLowerCase()));
@@ -63,18 +57,32 @@ async function main() {
       // Assign the issue
       await client.updateIssue(issue.id, { assigneeId: target.id });
 
-      // Comment with an @mention via profile URL (Linear converts this to a real mention)
-      const profileUrl = `https://linear.app/${WORKSPACE_SLUG}/profiles/${target.id}`;
-      const body =
-        `${profileUrl} please triage this issue in the next 48 hours.\n\n` +
-        `_(This is assigned automatically in a round-robin based on inbound tickets.)_`;
+      // Comment with a true @mention (ProseMirror) — send bodyData as a JSON string
+      const bodyData = JSON.stringify({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "mention", attrs: { id: target.id, type: "user" } },
+              { type: "text", text: ", please triage this issue in the next 48 hours." }
+            ]
+          },
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
+            ]
+          }
+        ]
+      });
 
       await client.createComment({
         issueId: issue.id,
-        body,
+        bodyData, // IMPORTANT: do not include `body` when sending `bodyData`
       });
 
-      console.log(`Assigned ${issue.identifier} to ${target.name}`);
+      console.log(`Assigned ${issue.identifier} to ${target.name} (${target.id}) and mentioned them`);
     } catch (err) {
       console.error(`Failed on ${issue.identifier}:`, err?.message || err);
     }
