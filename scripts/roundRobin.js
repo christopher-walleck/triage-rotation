@@ -59,7 +59,7 @@ async function postMentionComment(issueId, targetUser) {
 
   // Friendly message with raw URL mention first
   const body =
-    `Hi ${profileUrl}, please triage this issue in the next 48 hours.\n\n` +
+    `Hi ${profileUrl}, please triage this issue in the next 48 hours. If this issue is highly disruptive (breaks the app), please mark as Urgent, add the label iOS, and surface to the iOS team immediately.\n\n` +
     `_(This is assigned automatically in a round-robin based on inbound tickets.)_`;
 
   try {
@@ -73,7 +73,7 @@ async function postMentionComment(issueId, targetUser) {
   // Fallback: Markdown link (clickable; may not @-ping if not auto-converted)
   try {
     const fallbackBody =
-      `Hi [${targetUser.name}](${profileUrl}), please triage this issue in the next 48 hours.\n\n` +
+      `Hi [${targetUser.name}](${profileUrl}), please triage this issue in the next 48 hours. If this issue is highly disruptive (breaks the app), please mark as Urgent, add the label iOS, and surface to the iOS team immediately.\n\n` +
       `_(This is assigned automatically in a round-robin based on inbound tickets.)_`;
     await client.createComment({ issueId, body: fallbackBody });
     console.log(`  ✅ Friendly comment posted via Markdown fallback`);
