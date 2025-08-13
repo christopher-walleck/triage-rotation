@@ -1,10 +1,10 @@
 // scripts/roundRobin.js
-import { LinearClient, LinearDocument } from "@linear/sdk";
+import { LinearClient } from "@linear/sdk";
 
 const {
   LINEAR_API_KEY,
   LINEAR_TEAM_ID,
-  ASSIGNEE_EMAILS, // comma-separated emails, in rotation order
+  ASSIGNEE_EMAILS, // comma-separated emails in rotation order
 } = process.env;
 
 if (!LINEAR_API_KEY || !LINEAR_TEAM_ID || !ASSIGNEE_EMAILS) {
@@ -22,23 +22,30 @@ async function getUserMapByEmail(emails) {
     byEmail.set(u.email.toLowerCase(), { id: u.id, name: u.name });
   }
   const missing = emails.filter(e => !byEmail.has(e.toLowerCase()));
-  if (missing.length) throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
+  if (missing.length) {
+    throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
+  }
   return byEmail;
 }
 
 async function main() {
   const emails = ASSIGNEE_EMAILS.split(",").map(s => s.trim()).filter(Boolean);
+  if (emails.length === 0) {
+    console.error("ASSIGNEE_EMAILS is empty after parsing.");
+    process.exit(1);
+  }
+
   const userMap = await getUserMapByEmail(emails);
   const assignees = emails.map(e => userMap.get(e.toLowerCase())); // rotation order
 
-  // Unassigned issues in TRIAGE for this team, newest first
+  // Fetch unassigned issues in TRIAGE for this team (newest first)
   const issuesConn = await client.issues({
     filter: {
       team: { id: { eq: LINEAR_TEAM_ID } },
       assignee: { null: true },
       state: { type: { eq: "triage" } },
     },
-    orderBy: LinearDocument.PaginationOrderBy.CreatedAt,
+    orderBy: "createdAt",
     first: 100,
   });
 
@@ -46,32 +53,13 @@ async function main() {
     const idx = issue.number % assignees.length;
     const target = assignees[idx];
 
-    // Assign
+    // Assign the issue
     await client.updateIssue(issue.id, { assigneeId: target.id });
 
-    // Comment with a real @mention using rich text
-await client.createComment({
-  issueId: issue.id,
-  bodyData: {
-    type: "doc",
-    content: [
-      {
-        type: "paragraph",
-        content: [
-          { type: "mention", attrs: { id: target.id, type: "user" } },
-          { type: "text", text: ", please triage this issue in the next 48 hours." }
-        ]
-      },
-      {
-        type: "paragraph",
-        content: [
-          { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
-        ]
-      }
-    ]
-  }
-});
-
+    // Comment with a real @mention using rich text (ProseMirror)
+    await client.createComment({
+      issueId: issue.id,
+      bodyData: {
         type: "doc",
         content: [
           {
