@@ -50,10 +50,28 @@ async function main() {
     await client.updateIssue(issue.id, { assigneeId: target.id });
 
     // Comment with a real @mention using rich text
-    await client.createComment({
-      issueId: issue.id,
-      body: `Please triage this issue in the next 48 hours.`,
-      bodyData: {
+await client.createComment({
+  issueId: issue.id,
+  bodyData: {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "mention", attrs: { id: target.id, type: "user" } },
+          { type: "text", text: ", please triage this issue in the next 48 hours." }
+        ]
+      },
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
+        ]
+      }
+    ]
+  }
+});
+
         type: "doc",
         content: [
           {
