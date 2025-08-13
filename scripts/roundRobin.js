@@ -63,15 +63,31 @@ async function main() {
     // Assign the issue
     await client.issueUpdate(issue.id, { assigneeId: target.id });
 
-    // Comment with a true @mention via profile URL (Linear converts to @Name)
-    const body =
-      `${target.profileUrl} please triage this issue in the next 48 hours.\n\n` +
-      `_(This is assigned automatically in a round-robin based on inbound tickets.)_`;
+await client.commentCreate({
+  issueId: issue.id,
+  // Plaintext fallback (optional)
+  body: `Please triage this issue in the next 48 hours.`,
+  // Rich text with a true @mention
+  bodyData: {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "mention", attrs: { id: target.id, type: "user" } },
+          { type: "text", text: ", please triage this issue in the next 48 hours." }
+        ]
+      },
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
+        ]
+      }
+    ]
+  }
+});
 
-    await client.commentCreate({
-      issueId: issue.id,
-      body,
-    });
 
     console.log(`Assigned ${issue.identifier} to ${target.name}`);
   }
