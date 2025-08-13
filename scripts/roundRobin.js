@@ -5,11 +5,15 @@ const {
   LINEAR_API_KEY,
   LINEAR_TEAM_ID,
   ASSIGNEE_EMAILS, // comma-separated emails in rotation order
-  WORKSPACE_SLUG,  // optional; improves fallback mention link
+  WORKSPACE_SLUG,  // e.g. "hooglee"
 } = process.env;
 
 if (!LINEAR_API_KEY || !LINEAR_TEAM_ID || !ASSIGNEE_EMAILS) {
   console.error("Missing required env vars: LINEAR_API_KEY, LINEAR_TEAM_ID, ASSIGNEE_EMAILS");
+  process.exit(1);
+}
+if (!WORKSPACE_SLUG) {
+  console.error("Missing WORKSPACE_SLUG (e.g., 'hooglee'). Add it as a repo variable.");
   process.exit(1);
 }
 
@@ -20,58 +24,61 @@ async function getUserMapByEmail(emails) {
   const byEmail = new Map();
   for (const u of users.nodes) {
     if (!u?.email) continue;
-    byEmail.set(u.email.toLowerCase(), { id: u.id, name: u.name });
+    byEmail.set(u.email.toLowerCase(), {
+      id: u.id,
+      name: u.name,
+      url: u.url,
+      displayName: u.displayName, // often the /profiles handle (e.g., "alex.tang")
+      email: u.email.toLowerCase(),
+    });
   }
   const missing = emails.filter(e => !byEmail.has(e.toLowerCase()));
-  if (missing.length) {
-    throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
-  }
+  if (missing.length) throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
   return byEmail;
 }
 
-async function postCommentWithMention(issueId, target) {
-  // 1) Preferred: rich-text @mention using ProseMirror bodyData
+function profileUrlFromHandle(handle) {
+  return `https://linear.app/${WORKSPACE_SLUG}/profiles/${handle}`;
+}
+
+async function ensureProfileUrlForUserId(userId, fallbackHandle) {
+  // Fetch fresh user fields to get displayName (handle)
+  const { user } = await client.user(userId);
+  if (user?.displayName) return profileUrlFromHandle(user.displayName);
+  if (user?.url && /\/profiles\/[^/]+$/i.test(user.url)) return user.url;
+  // Last resort: try a derived handle (may not ping if wrong, but link remains clickable)
+  return profileUrlFromHandle((fallbackHandle || "there").toLowerCase());
+}
+
+async function postMentionComment(issueId, targetUser) {
+  // Build a /profiles/<handle> URL; Linear auto-converts raw URL to a chip-style @mention
+  const profileUrl = await ensureProfileUrlForUserId(
+    targetUser.id,
+    targetUser.email?.split("@")[0]
+  );
+
+  // Friendly message with raw URL mention first
+  const body =
+    `Hi ${profileUrl}, please triage this issue in the next 48 hours.\n\n` +
+    `_(This is assigned automatically in a round-robin based on inbound tickets.)_`;
+
   try {
-    await client.createComment({
-      issueId,
-      bodyData: {
-        type: "doc",
-        content: [
-          {
-            type: "paragraph",
-            content: [
-              // NOTE: schema differences exist; most workspaces accept just { id }
-              { type: "mention", attrs: { id: target.id } },
-              { type: "text", text: ", please triage this issue in the next 48 hours." }
-            ]
-          },
-          {
-            type: "paragraph",
-            content: [
-              { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
-            ]
-          }
-        ]
-      }
-    });
-    console.log(`  ✅ Comment posted via bodyData mention for ${target.name}`);
+    await client.createComment({ issueId, body });
+    console.log(`  ✅ Friendly comment posted via /profiles mention`);
     return;
   } catch (e) {
-    console.warn(`  ⚠️ bodyData mention failed: ${e?.message || e}`);
+    console.warn(`  ⚠️ Raw URL mention failed: ${e?.message || e}`);
   }
 
-  // 2) Fallback: Markdown link to /people/<id> (often renders as a person chip; always clickable)
+  // Fallback: Markdown link (clickable; may not @-ping if not auto-converted)
   try {
-    const slug = WORKSPACE_SLUG || "<your-slug>";
-    const profileUrl = `https://linear.app/${slug}/people/${target.id}`;
-    const body =
-      `[${target.name}](${profileUrl}) please triage this issue in the next 48 hours.\n\n` +
+    const fallbackBody =
+      `Hi [${targetUser.name}](${profileUrl}), please triage this issue in the next 48 hours.\n\n` +
       `_(This is assigned automatically in a round-robin based on inbound tickets.)_`;
-    await client.createComment({ issueId, body });
-    console.log(`  ✅ Comment posted via Markdown fallback for ${target.name}`);
-    return;
+    await client.createComment({ issueId, body: fallbackBody });
+    console.log(`  ✅ Friendly comment posted via Markdown fallback`);
   } catch (e) {
-    console.error(`  ❌ Fallback Markdown comment also failed: ${e?.message || e}`);
+    console.error(`  ❌ Markdown fallback failed: ${e?.message || e}`);
     throw e;
   }
 }
@@ -107,14 +114,14 @@ async function main() {
       const target = assignees[idx];
       console.log(`- ${issue.identifier}: assigning to ${target.name} (${target.id}) [idx=${idx}]`);
 
-      // Assign the issue
+      // Assign
       await client.updateIssue(issue.id, { assigneeId: target.id });
       console.log(`  ✅ Assigned ${issue.identifier} to ${target.name}`);
 
-      // Post the comment (rich-text mention, then Markdown fallback)
-      await postCommentWithMention(issue.id, target);
+      // Comment (friendly greeting + @mention)
+      await postMentionComment(issue.id, target);
 
-      // Optional: ensure they "follow" for extra notifications (ignore if not supported)
+      // Optional: ensure they follow for extra notifications (ignore if not supported)
       try {
         await client.updateIssue(issue.id, { subscriberIds: [target.id] });
         console.log(`  ✅ Added ${target.name} as follower`);
