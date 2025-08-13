@@ -5,6 +5,7 @@ const {
   LINEAR_API_KEY,
   LINEAR_TEAM_ID,
   ASSIGNEE_EMAILS, // comma-separated emails in rotation order
+  WORKSPACE_SLUG,  // optional; improves fallback mention link
 } = process.env;
 
 if (!LINEAR_API_KEY || !LINEAR_TEAM_ID || !ASSIGNEE_EMAILS) {
@@ -22,8 +23,57 @@ async function getUserMapByEmail(emails) {
     byEmail.set(u.email.toLowerCase(), { id: u.id, name: u.name });
   }
   const missing = emails.filter(e => !byEmail.has(e.toLowerCase()));
-  if (missing.length) throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
+  if (missing.length) {
+    throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
+  }
   return byEmail;
+}
+
+async function postCommentWithMention(issueId, target) {
+  // 1) Preferred: rich-text @mention using ProseMirror bodyData
+  try {
+    await client.createComment({
+      issueId,
+      bodyData: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              // NOTE: schema differences exist; most workspaces accept just { id }
+              { type: "mention", attrs: { id: target.id } },
+              { type: "text", text: ", please triage this issue in the next 48 hours." }
+            ]
+          },
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
+            ]
+          }
+        ]
+      }
+    });
+    console.log(`  ✅ Comment posted via bodyData mention for ${target.name}`);
+    return;
+  } catch (e) {
+    console.warn(`  ⚠️ bodyData mention failed: ${e?.message || e}`);
+  }
+
+  // 2) Fallback: Markdown link to /people/<id> (often renders as a person chip; always clickable)
+  try {
+    const slug = WORKSPACE_SLUG || "<your-slug>";
+    const profileUrl = `https://linear.app/${slug}/people/${target.id}`;
+    const body =
+      `[${target.name}](${profileUrl}) please triage this issue in the next 48 hours.\n\n` +
+      `_(This is assigned automatically in a round-robin based on inbound tickets.)_`;
+    await client.createComment({ issueId, body });
+    console.log(`  ✅ Comment posted via Markdown fallback for ${target.name}`);
+    return;
+  } catch (e) {
+    console.error(`  ❌ Fallback Markdown comment also failed: ${e?.message || e}`);
+    throw e;
+  }
 }
 
 async function main() {
@@ -32,11 +82,12 @@ async function main() {
     console.error("ASSIGNEE_EMAILS is empty after parsing.");
     process.exit(1);
   }
+  console.log(`Rotation order (${emails.length}): ${emails.join(" -> ")}`);
 
   const userMap = await getUserMapByEmail(emails);
   const assignees = emails.map(e => userMap.get(e.toLowerCase())); // rotation order
 
-  // Unassigned issues in TRIAGE for this team (newest first)
+  // Fetch unassigned issues in TRIAGE for this team (newest first)
   const issuesConn = await client.issues({
     filter: {
       team: { id: { eq: LINEAR_TEAM_ID } },
@@ -47,46 +98,35 @@ async function main() {
     first: 100,
   });
 
-  for (const issue of issuesConn.nodes) {
+  const issues = issuesConn.nodes || [];
+  console.log(`Found ${issues.length} unassigned triage issue(s) for team ${LINEAR_TEAM_ID}.`);
+
+  for (const issue of issues) {
     try {
       const idx = issue.number % assignees.length;
       const target = assignees[idx];
+      console.log(`- ${issue.identifier}: assigning to ${target.name} (${target.id}) [idx=${idx}]`);
 
-      // Assign
+      // Assign the issue
       await client.updateIssue(issue.id, { assigneeId: target.id });
+      console.log(`  ✅ Assigned ${issue.identifier} to ${target.name}`);
 
-      // Comment with a real @mention using ProseMirror bodyData (OBJECT, no `type:"user"` in attrs)
-      await client.createComment({
-        issueId: issue.id,
-        bodyData: {
-          type: "doc",
-          content: [
-            {
-              type: "paragraph",
-              content: [
-                { type: "mention", attrs: { id: target.id } },
-                { type: "text", text: ", please triage this issue in the next 48 hours." }
-              ]
-            },
-            {
-              type: "paragraph",
-              content: [
-                { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
-              ]
-            }
-          ]
-        }
-      });
+      // Post the comment (rich-text mention, then Markdown fallback)
+      await postCommentWithMention(issue.id, target);
 
-      // (Optional) ensure they follow the issue for extra notifications
+      // Optional: ensure they "follow" for extra notifications (ignore if not supported)
       try {
         await client.updateIssue(issue.id, { subscriberIds: [target.id] });
-      } catch { /* ignore if not supported */ }
+        console.log(`  ✅ Added ${target.name} as follower`);
+      } catch { /* ignore */ }
 
-      console.log(`Assigned ${issue.identifier} to ${target.name} (${target.id}) and mentioned them`);
     } catch (err) {
-      console.error(`Failed on ${issue.identifier}: ${err?.message || err}`);
+      console.error(`  ❌ Failed on ${issue.identifier}: ${err?.message || err}`);
     }
+  }
+
+  if (issues.length === 0) {
+    console.log("Nothing to do. Exiting.");
   }
 }
 
