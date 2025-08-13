@@ -1,0 +1,10 @@
+{
+  "name": "triage-rotation",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@linear/sdk": "^53.0.0"
+  }
+}
