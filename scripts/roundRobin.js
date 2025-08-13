@@ -22,9 +22,7 @@ async function getUserMapByEmail(emails) {
     byEmail.set(u.email.toLowerCase(), { id: u.id, name: u.name });
   }
   const missing = emails.filter(e => !byEmail.has(e.toLowerCase()));
-  if (missing.length) {
-    throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
-  }
+  if (missing.length) throw new Error(`Not Linear users (by email): ${missing.join(", ")}`);
   return byEmail;
 }
 
@@ -38,7 +36,7 @@ async function main() {
   const userMap = await getUserMapByEmail(emails);
   const assignees = emails.map(e => userMap.get(e.toLowerCase())); // rotation order
 
-  // Fetch unassigned issues in TRIAGE for this team (newest first)
+  // Unassigned issues in TRIAGE for this team (newest first)
   const issuesConn = await client.issues({
     filter: {
       team: { id: { eq: LINEAR_TEAM_ID } },
@@ -54,37 +52,40 @@ async function main() {
       const idx = issue.number % assignees.length;
       const target = assignees[idx];
 
-      // Assign the issue
+      // Assign
       await client.updateIssue(issue.id, { assigneeId: target.id });
 
-      // Comment with a true @mention (ProseMirror) — send bodyData as a JSON string
-      const bodyData = JSON.stringify({
-        type: "doc",
-        content: [
-          {
-            type: "paragraph",
-            content: [
-              { type: "mention", attrs: { id: target.id, type: "user" } },
-              { type: "text", text: ", please triage this issue in the next 48 hours." }
-            ]
-          },
-          {
-            type: "paragraph",
-            content: [
-              { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
-            ]
-          }
-        ]
-      });
-
+      // Comment with a real @mention using ProseMirror bodyData (OBJECT, no `type:"user"` in attrs)
       await client.createComment({
         issueId: issue.id,
-        bodyData, // IMPORTANT: do not include `body` when sending `bodyData`
+        bodyData: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "mention", attrs: { id: target.id } },
+                { type: "text", text: ", please triage this issue in the next 48 hours." }
+              ]
+            },
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "(This is assigned automatically in a round-robin based on inbound tickets.)" }
+              ]
+            }
+          ]
+        }
       });
+
+      // (Optional) ensure they follow the issue for extra notifications
+      try {
+        await client.updateIssue(issue.id, { subscriberIds: [target.id] });
+      } catch { /* ignore if not supported */ }
 
       console.log(`Assigned ${issue.identifier} to ${target.name} (${target.id}) and mentioned them`);
     } catch (err) {
-      console.error(`Failed on ${issue.identifier}:`, err?.message || err);
+      console.error(`Failed on ${issue.identifier}: ${err?.message || err}`);
     }
   }
 }
