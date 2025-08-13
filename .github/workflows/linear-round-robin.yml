@@ -20,4 +20,5 @@ jobs:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           LINEAR_TEAM_ID: ${{ vars.LINEAR_TEAM_ID }}
           ASSIGNEE_EMAILS: ${{ vars.ASSIGNEE_EMAILS }}  # "a@hooglee.com,b@...,c@..."
+          WORKSPACE_SLUG: ${{ vars.WORKSPACE_SLUG }}
         run: node scripts/roundRobin.js
